@@ -5,6 +5,12 @@ services:
     build: ./backend
     ports:
       - "8000:8000"
+    environment:
+      - REDIS_HOST=redis
+      - DATABASE_URL=postgresql://user:pass@db:5432/crispr_db
+    depends_on:
+      - redis
+      - db
 
   frontend:
     build: ./frontend
@@ -12,3 +18,22 @@ services:
       - "3000:3000"
     environment:
       - REACT_APP_API_URL=http://localhost:8000
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: pass
+      POSTGRES_DB: crispr_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
