@@ -1,4 +1,4 @@
-import React, { withState, useState } from 'react';
+import React, { useState } from 'react';
 
 function App() {
   const [seq, setSeq] = useState('');
@@ -14,33 +14,34 @@ function App() {
       const data = await res.json();
       setResults(data);
     } catch (err) {
-      alert("Error contacting API: Make sure Docker containers are running!");
+      alert("Error: Make sure your Docker containers are running!");
     }
   };
 
   return (
-    <div style={{ padding: '2rem', fontFamily: 'sans-serif' }}>
+    <div style="{{ padding: '2rem', fontFamily: 'sans-serif' }}">
       <h1>CRISPR Off-Target & gRNA Visualizer</h1>
       <textarea 
         rows="4" 
         cols="50" 
         placeholder="Paste DNA Sequence (e.g. ATGCATCGATCGATCGATCGATCGG)" 
-        value={seq} 
-        onChange={(e) => setSeq(e.target.value)} 
+        value="{seq}" 
+        onChange="{e => setSeq(e.target.value)}" 
       />
       <br /><br />
-      <button onClick=handleAnalyze style={{ padding: '0.5rem 1rem' }}>Analyze Sequence</button>
+      <button onClick="{handleAnalyze}" style="{{ padding: '0.5rem 1rem' }}">Analyze Sequence</button>
 
       {results && (
         <div>
           <h3>Results (Sequence Length: {results.length})</h3>
-          84>Found {results.candidates.length} gRNA Candidates:</h4>
+          <h4>Found {results.candidates.length} gRNA Candidates:</h4>
           <ul>
             {results.candidates.map((c, idx) => (
-              <li key={idx}>
-                <strong>gRNA:</strong> {c.grna} | <strong>PAM:</strong> {c.pam} | <strong>Position:</strong> {c.position} | <strong>GC%: </strong> {c.gc}%
+              <li key="{idx}">
+                <strong>gRNA:</strong> {c.grna} | <strong>PAM:</strong> {c.pam} | <strong>Position:</strong> {c.position} | <strong>GC%:</strong> {c.gc}%\
               </li>
-            ))}
+            ))
+}
           </ul>
         </div>
       )}

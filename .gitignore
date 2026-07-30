@@ -8,7 +8,7 @@ backend/__pycache__/
 backend/*.pyc
 backend/.venv/
 
-# System & Environment
+# OS & Logs
 .DS_Store
 *.log
 .env
