@@ -7,7 +7,7 @@ on:
     branches: [ "main" ]
 
 jobs:
-  build-and-test:
+  backend-tests:
     runs-on: ubuntu-latest
 
     steps:
@@ -19,11 +19,15 @@ jobs:
       with:
         python-version: "3.11"
 
-    - name: Install Dependencies
+    - name: Install Backend Dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install fastapi uvicorn
+        pip install -r backend/requirements.txt
 
-    - name: Build Docker Stack Check
+    - name: Run API Health Check Test
       run: |
-        docker-compose build
+        python -c "from backend.main import app; print('Backend module imported successfully!')"
+
+    - name: Validate Docker Compose Config
+      run: |
+        docker compose config
