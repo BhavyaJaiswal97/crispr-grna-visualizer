@@ -1,238 +1,344 @@
 import React, { useState } from 'react';
 
-function App() {
-  const [seq, setSeq] = useState('');
-  const [bgSeq, setBgSeq] = useState('');
-  const [nuclease, setNuclease] = useState('SpCas9');
-  const [results, setResults] = useState(null);
-  const [selectedCandidate, setSelectedCandidate] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+export default function App() {
+  const [activeScreen, setActiveScreen] = useState(1);
+  const [selectedProject, setSelectedProject] = useState('BRCA1_Target_Design');
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
-  const handleAnalyze = async () => {
-    setLoading(true);
-    setError(null);
-    setSelectedCandidate(null);
-    try {
-      const res = await fetch('http://localhost:8000/api/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sequence: seq,
-          nuclease: nuclease,
-          off_target_background: bgSeq || null,
-          max_mismatches: 3
-        })
-      });
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.detail || 'Failed to analyze sequence');
-      }
-      const data = await res.json();
-      setResults(data);
-      if (data.candidates.length > 0) {
-        setSelectedCandidate(data.candidates[0]);
-      }
-    } catch (err) {
-      setError(err.message || 'Error connecting to backend container.');
-    } finally {
-      setLoading(false);
+  const navItems = [
+    { id: 1, label: 'Dashboard', icon: '🏠' },
+    { id: 2, label: 'Results', icon: '📊' },
+    { id: 3, label: 'Sequence Viewer', icon: '🧬' },
+    { id: 4, label: 'Off-Targets', icon: '🎯' },
+    { id: 5, label: 'Projects', icon: '📁' },
+    { id: 6, label: 'Exports', icon: '📥' },
+    { id: 7, label: 'Settings', icon: '⚙️' },
+    { id: 8, label: 'About', icon: 'ℹ️' },
+  ];
+
+  const resultsData = [
+    { id: 1, spacer: 'GCTAGCTAGCTAGCTAGCTA', start: 1250, end: 1269, strand: '+', gc: '55%', mismatches: 1, specificity: '92.1%' },
+    { id: 2, spacer: 'CGATCGATCGATCGATCGAT', start: 3321, end: 3349, strand: '-', gc: '60%', mismatches: 2, specificity: '87.4%' },
+    { id: 3, spacer: 'TGCATCGATCGATCGATCGA', start: 5120, end: 5139, strand: '+', gc: '60%', mismatches: 1, specificity: '84.6%' },
+    { id: 4, spacer: 'AGCTAGCTAGCTAGCTAGCT', start: 789, end: 808, strand: '+', gc: '45%', mismatches: 3, specificity: '76.3%' },
+    { id: 5, spacer: 'GGGATGATCGATCGATCGTA', start: 2210, end: 2229, strand: '-', gc: '65%', mismatches: 2, specificity: '73.8%' },
+  ];
+
+  const projectsData = [
+    { title: 'BRCA1_Target_Design', date: 'May 20, 2025 • 10:42 AM', length: '8,432 bp', cas: 'SpCas9 NGG' },
+    { title: 'TP53_gRNA_Set', date: 'May 18, 2025 • 3:15 PM', length: '7,128 bp', cas: 'SpCas9 NGG' },
+    { title: 'VEGFA_Promoter', date: 'May 15, 2025 • 11:05 AM', length: '6,210 bp', cas: 'SpCas9 NGG' },
+    { title: 'IL2RG_Exon3', date: 'May 12, 2025 • 9:30 AM', length: '5,980 bp', cas: 'SpCas9 NGG' },
+    { title: 'MYC_Enhancer', date: 'May 10, 2025 • 4:20 PM', length: '10,203 bp', cas: 'SpCas9 NGG' },
+  ];
+
+  const nucleotides = ['A', 'T', 'C', 'G', 'A', 'T', 'G', 'C', 'A', 'T', 'G', 'C', 'A', 'T', 'A', 'T', 'G', 'C', 'A', 'G', 'C', 'T', 'A', 'G'];
+  const getColor = (n) => {
+    switch(n) {
+      case 'A': return 'bg-emerald-500 text-white';
+      case 'T': return 'bg-rose-500 text-white';
+      case 'C': return 'bg-blue-500 text-white';
+      case 'G': return 'bg-amber-500 text-white';
+      default: return 'bg-gray-200 text-gray-800';
     }
   };
 
-  const getEfficiencyColor = (score) => {
-    if (score >= 70) return '#16a34a'; // Green
-    if (score >= 50) return '#ca8a04'; // Yellow
-    return '#dc2626'; // Red
-  };
-
   return (
-    <div style={{ padding: '2rem', fontFamily: 'system-ui, -apple-system, sans-serif', maxWidth: '1200px', margin: '0 auto', color: '#1e293b' }}>
-      <header style={{ borderBottom: '2px solid #e2e8f0', paddingBottom: '1rem', marginBottom: '1.5rem' }}>
-        <h1 style={{ margin: 0, color: '#0f172a' }}>CRISPR Off-Target & gRNA Visualizer Report</h1>
-        <p style={{ margin: '0.5rem 0 0 0', color: '#64748b' }}>
-          Multi-nuclease CRISPR design studio featuring Hsu et al. (MIT) off-target scoring & Doench-Root efficiency profiling.
-        </p>
-      </header>
-
-      {/* Control Panel */}
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '1.5rem', marginBottom: '2rem' }}>
+    <div className="flex h-screen bg-[#F9FAFB] font-sans antialiased overflow-hidden">
+      
+      {/* Dark Sidebar Navigation */}
+      <aside className="w-64 bg-[#111827] text-gray-300 flex flex-col justify-between h-screen p-4 select-none shrink-0">
         <div>
-          <label style={{ display: 'block', fontWeight: 'bold', marginBottom: '0.5rem' }}>
-            Target Genomic DNA Sequence:
-          </label>
-          <textarea
-            rows={4}
-            style={{ width: '100%', padding: '0.75rem', fontFamily: 'monospace', border: '1px solid #cbd5e1', borderRadius: '6px' }}
-            placeholder="Paste raw target DNA sequence (minimum 23 bp, e.g. ATGCGATCGATCGATCGATCGATCGGATCGATCG...)"
-            value={seq}
-            onChange={(e) => setSeq(e.target.value)}
-          />
-
-          <label style={{ display: 'block', fontWeight: 'bold', margin: '1rem 0 0.5rem 0' }}>
-            Optional Off-Target Background Genome (or Contig) to Scan:
-          </label>
-          <textarea
-            rows={2}
-            style={{ width: '100%', padding: '0.75rem', fontFamily: 'monospace', border: '1px solid #cbd5e1', borderRadius: '6px' }}
-            placeholder="Paste background sequence to scan for unintended mismatches..."
-            value={bgSeq}
-            onChange={(e) => setBgSeq(e.target.value)}
-          />
-        </div>
-
-        <div style={{ background: '#f8fafc', padding: '1.25rem', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
-          <label style={{ display: 'block', fontWeight: 'bold', marginBottom: '0.5rem' }}>
-            Select CRISPR Nuclease:
-          </label>
-          <select
-            value={nuclease}
-            onChange={(e) => setNuclease(e.target.value)}
-            style={{ width: '100%', padding: '0.5rem', marginBottom: '1.25rem', borderRadius: '4px', border: '1px solid #cbd5e1' }}
-          >
-            <option value="SpCas9">SpCas9 (PAM: NGG | 3'-oriented)</option>
-            <option value="SaCas9">SaCas9 (PAM: NNGRRT | 3'-oriented)</option>
-            <option value="Cas12a">Cas12a / Cpf1 (PAM: TTTV | 5'-oriented)</option>
-          </select>
-
-          <button
-            onClick={handleAnalyze}
-            disabled={loading || !seq.trim()}
-            style={{
-              width: '100%',
-              padding: '0.75rem 1rem',
-              backgroundColor: '#2563eb',
-              color: 'white',
-              border: 'none',
-              borderRadius: '6px',
-              fontWeight: 'bold',
-              cursor: loading ? 'not-allowed' : 'pointer'
-            }}
-          >
-            {loading ? 'Running Algorithms...' : 'Analyze & Generate CRISPR Report'}
-          </button>
-
-          {error && <div style={{ color: '#dc2626', marginTop: '1rem', fontSize: '0.875rem' }}>⚠️ {error}</div>}
-        </div>
-      </div>
-
-      {/* Visual Sequence Map */}
-      {results && (
-        <div style={{ marginBottom: '2.5rem' }}>
-          <h3>Genomic Sequence Browser & Target Alignment Map</h3>
-          <div style={{
-            fontFamily: 'monospace',
-            backgroundColor: '#0f172a',
-            color: '#e2e8f0',
-            padding: '1.25rem',
-            borderRadius: '8px',
-            overflowX: 'auto',
-            lineHeight: '2',
-            wordBreak: 'break-all'
-          }}>
-            {seq.toUpperCase().split('').map((base, idx) => {
-              let isGuide = false;
-              let isPam = false;
-              if (selectedCandidate) {
-                const gStart = selectedCandidate.position;
-                const gEnd = gStart + selectedCandidate.grna.length;
-                const pEnd = gEnd + selectedCandidate.pam.length;
-                if (idx >= gStart && idx < gEnd) isGuide = true;
-                if (idx >= gEnd && idx < pEnd) isPam = true;
-              }
-              return (
-                <span
-                  key={idx}
-                  style={{
-                    backgroundColor: isGuide ? '#2563eb' : (isPam ? '#dc2626' : 'transparent'),
-                    color: (isGuide || isPam) ? '#ffffff' : '#cbd5e1',
-                    padding: '2px 3px',
-                    borderRadius: '2px',
-                    fontWeight: (isGuide || isPam) ? 'bold' : 'normal'
-                  }}
-                  title={`Position: ${idx} | Base: ${base}`}
-                >
-                  {base}
-                </span>
-              );
-            })}
+          <div className="flex items-center space-x-2 px-2 mb-8">
+            <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold text-sm shadow">CV</div>
+            <div>
+              <h1 className="text-white font-bold text-base leading-tight">CRISPR-Vision</h1>
+              <p className="text-[10px] text-gray-400">gRNA Design Suite</p>
+            </div>
           </div>
-          <div style={{ display: 'flex', gap: '1.5rem', marginTop: '0.5rem', fontSize: '0.875rem' }}>
-            <span><span style={{ display: 'inline-block', width: '12px', height: '12px', background: '#2563eb', marginRight: '6px' }}></span>Target gRNA ({selectedCandidate?.grna})</span>
-            <span><span style={{ display: 'inline-block', width: '12px', height: '12px', background: '#dc2626', marginRight: '6px' }}></span>PAM Site ({selectedCandidate?.pam})</span>
-          </div>
-        </div>
-      )}
-
-      {/* Candidates Table & Off-Target Analytics */}
-      {results && (
-        <div>
-          <h3>Guide RNA (gRNA) Candidate Report ({results.candidates.length} Found)</h3>
-          <p style={{ color: '#64748b', fontSize: '0.875rem' }}>Click any row to inspect its alignment in the Genomic Sequence Map above.</p>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1rem' }}>
-            {results.candidates.map((cand) => (
-              <div
-                key={cand.id}
-                onClick={() => setSelectedCandidate(cand)}
-                style={{
-                  border: selectedCandidate?.id === cand.id ? '2px solid #2563eb' : '1px solid #cbd5e1',
-                  borderRadius: '8px',
-                  padding: '1rem',
-                  cursor: 'pointer',
-                  backgroundColor: selectedCandidate?.id === cand.id ? '#eff6ff' : '#ffffff'
-                }}
+          <nav className="space-y-1">
+            {navItems.map((item) => (
+              <button
+                key={item.id}
+                onClick={() => setActiveScreen(item.id)}
+                className={`w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-xs font-medium transition-colors ${
+                  activeScreen === item.id ? 'bg-blue-600 text-white shadow-sm' : 'hover:bg-gray-800 text-gray-400'
+                }`}
               >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-                  <span style={{ fontFamily: 'monospace', fontSize: '1.1rem', fontWeight: 'bold', color: '#0f172a' }}>
-                    {cand.grna} <span style={{ color: '#dc2626' }}>{cand.pam}</span>
-                  </span>
-                  <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-                    <span style={{
-                      padding: '4px 8px',
-                      borderRadius: '12px',
-                      fontSize: '0.75rem',
-                      fontWeight: 'bold',
-                      color: 'white',
-                      backgroundColor: getEfficiencyColor(cand.efficiency_score)
-                    }}>
-                      Efficiency: {cand.efficiency_score}/100
-                    </span>
-                    <span style={{ fontSize: '0.875rem', color: '#475569' }}>
-                      <strong>GC:</strong> {cand.gc_content}% | <strong>Pos:</strong> {cand.position}
-                    </span>
-                  </div>
+                <span className="text-sm">{item.icon}</span>
+                <span>{item.label}</span>
+              </button>
+            ))}
+          </nav>
+        </div>
+        <div className="text-[11px] text-gray-500 px-2 flex justify-between items-center border-t border-gray-800 pt-3">
+          <span>v1.0.0</span>
+          <span>🌙 ⚙️</span>
+        </div>
+      </aside>
+
+      {/* Main Workspace Area */}
+      <main className="flex-1 overflow-y-auto relative">
+        
+        {/* SCREEN 1: Landing & Sequence Input Dashboard */}
+        {activeScreen === 1 && (
+          <div className="p-8 max-w-6xl mx-auto">
+            <h2 className="text-2xl font-bold text-gray-900 tracking-tight">Welcome to CRISPR-Vision</h2>
+            <p className="text-sm text-gray-500 mt-1 mb-6">Design high-specificity gRNAs and visualize genomic targets with confidence.</p>
+            
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+              <div className="flex space-x-6 border-b border-gray-100 pb-3 mb-4 text-xs font-semibold text-blue-600">
+                <span className="border-b-2 border-blue-600 pb-3 cursor-pointer">Input Sequence</span>
+                <span className="text-gray-400 cursor-pointer hover:text-gray-600">Example Sequences</span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-medium text-gray-700 mb-2">Paste raw DNA sequence</label>
+                  <textarea 
+                    className="w-full h-44 p-3 border border-gray-200 rounded-lg font-mono text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50/50"
+                    defaultValue="ATCGGATCGGACTCGATCGATCGATCGATCGTCG&#10;CTAGCTAGCTAGCTAGCTAGCTAGCTAGCTAG&#10;CSATCGATCGATCGTCGATCGATCGATCGATC&#10;ATCGATCGATCGCTTAGCTAGCTAGCTAGCTA&#10;GATCGATCGATCGATCGATCGATCGATCGATC"
+                  />
                 </div>
-
-                {/* Biological Warnings */}
-                {cand.warnings.length > 0 && (
-                  <div style={{ background: '#fef3c7', color: '#92400e', padding: '0.5rem', borderRadius: '4px', fontSize: '0.8rem', marginBottom: '0.75rem' }}>
-                    <strong>⚠️ Structural Warnings:</strong> {cand.warnings.join(' ')}
-                  </div>
-                )}
-
-                {/* Off-target breakdown */}
-                <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '0.75rem', marginTop: '0.5rem' }}>
-                  <strong style={{ fontSize: '0.875rem' }}>Off-Target Specificity Matches ({cand.off_target_count}):</strong>
-                  {cand.off_targets.length === 0 ? (
-                    <span style={{ color: '#16a34a', fontSize: '0.875rem', marginLeft: '0.5rem' }}>✔ No high-risk off-target mismatches found within background sequence.</span>
-                  ) : (
-                    <ul style={{ margin: '0.5rem 0 0 1.5rem', fontSize: '0.85rem' }}>
-                      {cand.off_targets.map((ot, idx) => (
-                        <li key={idx}>
-                          <span style={{ fontFamily: 'monospace' }}>{ot.sequence}</span> — Position {ot.position} ({ot.mismatches} mismatches) | Specificity Score: <strong>{ot.specificity_score}</strong> ({ot.risk_level} risk)
-                        </li>
-                      ))}
-                    </ul>
-                  )}
+                <div className="border-2 border-dashed border-blue-200 bg-blue-50/40 rounded-xl flex flex-col items-center justify-center p-6 text-center cursor-pointer hover:bg-blue-50 transition">
+                  <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 mb-2 font-bold text-lg">📁</div>
+                  <p className="text-xs font-semibold text-blue-600">Drag & drop .fasta file here</p>
+                  <p className="text-[11px] text-gray-400 mt-1">or click to browse</p>
+                  <span className="text-[10px] text-gray-400 mt-3">Supports .fasta, .fa, .txt (max 50MB)</span>
                 </div>
               </div>
-            ))}
+
+              <div className="mt-6 flex items-center justify-between border-t border-gray-100 pt-5">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Select Cas Variant</label>
+                  <select className="border border-gray-200 rounded-lg px-3 py-2 text-xs bg-white text-gray-800 focus:outline-none shadow-sm">
+                    <option>SpCas9 NGG</option>
+                  </select>
+                </div>
+                <button 
+                  onClick={() => setActiveScreen(2)}
+                  className="bg-blue-600 hover:bg-blue-700 text-white font-medium px-6 py-2.5 rounded-lg text-xs shadow-md transition-colors flex items-center space-x-2"
+                >
+                  <span>▶ Run Analysis</span>
+                </button>
+              </div>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+
+        {/* SCREEN 2: Candidate Results & Scoring Table */}
+        {activeScreen === 2 && (
+          <div className="p-8 max-w-7xl mx-auto">
+            {/* Metric Summary Cards */}
+            <div className="grid grid-cols-4 gap-4 mb-6">
+              <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+                <p className="text-[11px] text-gray-400 uppercase font-semibold">Total Candidates</p>
+                <h3 className="text-2xl font-bold text-gray-900 mt-1">23</h3>
+                <span className="text-[10px] text-gray-500">Passing filters</span>
+              </div>
+              <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+                <p className="text-[11px] text-gray-400 uppercase font-semibold">High Specificity (Score ≥ 70)</p>
+                <h3 className="text-2xl font-bold text-emerald-600 mt-1">11</h3>
+                <span className="text-[10px] text-gray-500">47.8%</span>
+              </div>
+              <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+                <p className="text-[11px] text-gray-400 uppercase font-semibold">Average GC Content</p>
+                <h3 className="text-2xl font-bold text-blue-600 mt-1">52.3%</h3>
+                <span className="text-[10px] text-gray-500">Optimal (40-60%)</span>
+              </div>
+              <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+                <p className="text-[11px] text-gray-400 uppercase font-semibold">Best Score</p>
+                <h3 className="text-2xl font-bold text-purple-600 mt-1">92.1</h3>
+                <span className="text-[10px] text-gray-500">Rank #1</span>
+              </div>
+            </div>
+
+            {/* Data Table */}
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50/50">
+                <input type="text" placeholder="Search by sequence..." className="px-3 py-1.5 border rounded-lg text-xs w-64 bg-white" />
+                <button onClick={() => setIsDrawerOpen(true)} className="text-xs bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg font-medium hover:bg-blue-100">
+                  Inspect Row 1 (Drawer Demo)
+                </button>
+              </div>
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-gray-100 text-gray-600 border-b border-gray-200 font-semibold">
+                    <th className="p-3">Rank</th>
+                    <th className="p-3">gRNA Spacer (20 bp)</th>
+                    <th className="p-3">Start</th>
+                    <th className="p-3">End</th>
+                    <th className="p-3">Strand</th>
+                    <th className="p-3">GC %</th>
+                    <th className="p-3">Off-Target Mismatches</th>
+                    <th className="p-3">Specificity Score</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {resultsData.map((row) => (
+                    <tr key={row.id} onClick={() => setIsDrawerOpen(true)} className="hover:bg-blue-50/50 cursor-pointer transition">
+                      <td className="p-3 font-semibold text-gray-500">{row.id}</td>
+                      <td className="p-3 font-mono text-gray-800 font-medium">{row.spacer}</td>
+                      <td className="p-3 text-gray-600">{row.start}</td>
+                      <td className="p-3 text-gray-600">{row.end}</td>
+                      <td className="p-3 text-gray-600 font-bold">{row.strand}</td>
+                      <td className="p-3 text-gray-600">{row.gc}</td>
+                      <td className="p-3"><span className="px-2 py-0.5 bg-amber-100 text-amber-800 rounded-full font-bold">{row.mismatches}</span></td>
+                      <td className="p-3 font-bold text-emerald-600">{row.specificity}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* SCREEN 3: Interactive Genomic Sequence Viewer */}
+        {activeScreen === 3 && (
+          <div className="p-8 max-w-7xl mx-auto">
+            <div className="flex justify-between items-center mb-4">
+              <span className="text-xs font-semibold text-gray-700">Sequence: Untitled_Sequence_01.fasta</span>
+              <span className="text-xs text-gray-500 font-mono">Length: 8,432 bp</span>
+            </div>
+            
+            <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
+              <div className="flex items-center space-x-3 mb-6 border-b pb-4 text-xs">
+                <button className="border px-3 py-1.5 rounded-lg bg-gray-50 font-medium hover:bg-gray-100">🔍 Zoom: 1.5x</button>
+                <button className="border px-3 py-1.5 rounded-lg bg-gray-50 font-medium hover:bg-gray-100">Fit to Screen</button>
+              </div>
+
+              {/* Nucleotide Grid Blocks */}
+              <div className="font-mono text-xs overflow-x-auto py-2">
+                <p className="text-[11px] text-gray-400 mb-2">Forward Strand (5' → 3')</p>
+                <div className="flex space-x-1">
+                  {nucleotides.map((n, idx) => (
+                    <div key={idx} className={`w-8 h-8 flex items-center justify-center font-bold rounded text-xs shadow-sm ${getColor(n)}`}>
+                      {n}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Binding Tracks Placeholder */}
+              <div className="mt-8 pt-6 border-t border-gray-100">
+                <p className="text-xs font-bold text-gray-700 mb-3">gRNA Candidates (Top)</p>
+                <div className="h-10 bg-emerald-50 rounded-lg border border-emerald-200 flex items-center px-4 space-x-4 text-xs text-emerald-800 font-semibold">
+                  <span>#1 Target Region</span>
+                  <span className="text-[10px] bg-emerald-200 px-2 py-0.5 rounded">Chr 1: 1,250 - 1,269 (+)</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* SCREEN 4: Off-Target Details Modal / Drawer */}
+        {(activeScreen === 4 || isDrawerOpen) && (
+          <div className="absolute inset-0 bg-black/30 backdrop-blur-xs flex justify-end z-50">
+            <div className="w-[450px] bg-white h-full shadow-2xl p-6 overflow-y-auto flex flex-col justify-between">
+              <div>
+                <div className="flex justify-between items-center border-b pb-4">
+                  <h3 className="font-bold text-gray-900 text-sm">gRNA Candidate #1</h3>
+                  <button onClick={() => setIsDrawerOpen(false)} className="text-gray-400 hover:text-black font-bold">✕</button>
+                </div>
+                
+                <div className="mt-4 bg-gray-50 p-3 rounded-lg border">
+                  <p className="text-[10px] text-gray-500 uppercase font-semibold">Spacer Sequence (20 bp)</p>
+                  <p className="font-mono font-bold text-sm text-blue-600 mt-1">GCTAGCTAGCTAGCTAGCTA</p>
+                </div>
+
+                <div className="mt-6">
+                  <h4 className="text-xs font-bold text-gray-700 mb-3">Off-Target Matches</h4>
+                  <div className="space-y-2 text-xs">
+                    <div className="p-3 border rounded-lg flex justify-between items-center bg-white shadow-xs">
+                      <span className="font-semibold text-gray-800">chr3: 125,438</span>
+                      <span className="text-emerald-600 font-bold">Score: 91.3</span>
+                    </div>
+                    <div className="p-3 border rounded-lg flex justify-between items-center bg-white shadow-xs">
+                      <span className="font-semibold text-gray-800">chr7: 88,912</span>
+                      <span className="text-emerald-600 font-bold">Score: 78.5</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <button onClick={() => setIsDrawerOpen(false)} className="w-full bg-gray-900 text-white py-2 rounded-lg text-xs font-medium hover:bg-black">
+                Close Drawer
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* SCREEN 5: Project History & Saved Sessions */}
+        {activeScreen === 5 && (
+          <div className="p-8 max-w-7xl mx-auto">
+            <div className="flex justify-between items-center mb-6">
+              <div>
+                <h2 className="text-xl font-bold text-gray-900">My Projects</h2>
+                <p className="text-xs text-gray-500 mt-0.5">Manage and revisit your CRISPR design sessions.</p>
+              </div>
+              <button className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-medium shadow-sm">
+                + New Project
+              </button>
+            </div>
+
+            <div className="grid grid-cols-3 gap-6">
+              {projectsData.map((proj, idx) => (
+                <div key={idx} className="bg-white border border-gray-200 rounded-xl p-5 shadow-sm hover:border-blue-300 transition">
+                  <h3 className="font-bold text-gray-900 text-sm mb-1">{proj.title}</h3>
+                  <p className="text-[11px] text-gray-400 mb-4">{proj.date}</p>
+                  <div className="text-xs text-gray-600 space-y-1 mb-5">
+                    <p>Length: <span className="font-mono font-medium">{proj.length}</span></p>
+                    <p>Cas: <span className="font-medium">{proj.cas}</span></p>
+                  </div>
+                  <div className="flex space-x-2">
+                    <button onClick={() => setSelectedProject(proj.title)} className="flex-1 bg-blue-50 text-blue-600 hover:bg-blue-100 py-1.5 rounded-lg text-xs font-semibold">Open</button>
+                    <button className="p-1.5 border rounded-lg text-gray-400 hover:text-red-600">🗑️</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* SCREEN 6: Export & Summary Report Modal */}
+        {(activeScreen === 6 || isExportModalOpen) && (
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center z-50">
+            <div className="bg-white rounded-2xl shadow-2xl w-[500px] p-6 border border-gray-200">
+              <div className="flex justify-between items-center border-b pb-3 mb-4">
+                <h3 className="font-bold text-gray-900 text-sm">Export & Summary Report</h3>
+                <button onClick={() => setActiveScreen(1)} className="text-gray-400 hover:text-black font-bold">✕</button>
+              </div>
+
+              <div className="space-y-4 text-xs">
+                <div>
+                  <label className="block font-semibold text-gray-700 mb-2">Select Export Format</label>
+                  <div className="space-y-2">
+                    <label className="flex items-center space-x-2"><input type="radio" name="format" defaultChecked /> <span>CSV (Comma Separated Values)</span></label>
+                    <label className="flex items-center space-x-2"><input type="radio" name="format" /> <span>FASTA Sequences</span></label>
+                    <label className="flex items-center space-x-2"><input type="radio" name="format" /> <span>JSON (All Data)</span></label>
+                  </div>
+                </div>
+
+                <div className="border-t pt-4">
+                  <label className="block font-semibold text-gray-700 mb-2">Include in Export</label>
+                  <div className="space-y-2 text-gray-600">
+                    <label className="flex items-center space-x-2"><input type="checkbox" defaultChecked /> <span>Include gRNA candidate table</span></label>
+                    <label className="flex items-center space-x-2"><input type="checkbox" defaultChecked /> <span>Include off-target breakdown</span></label>
+                    <label className="flex items-center space-x-2"><input type="checkbox" defaultChecked /> <span>Include GC content scores</span></label>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-6 pt-4 border-t flex justify-end space-x-3">
+                <button onClick={() => setActiveScreen(1)} className="px-4 py-2 border rounded-lg text-xs font-medium hover:bg-gray-50">Cancel</button>
+                <button onClick={() => alert("Report downloaded successfully!")} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg text-xs font-medium shadow-sm">Download Report</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+      </main>
     </div>
   );
 }
-
-export default App;
