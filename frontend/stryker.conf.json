@@ -1,0 +1,8 @@
+{
+  "testRunner": "command",
+  "commandRunner": { "command": "npm run test:ci" },
+  "mutate": ["src/lib/crispr.js"],
+  "reporters": ["clear-text", "progress", "html"],
+  "coverageAnalysis": "off",
+  "htmlReporter": { "fileName": "reports/mutation/mutation.html" }
+}
