@@ -1,344 +1,468 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 
-export default function App() {
-  const [activeScreen, setActiveScreen] = useState(1);
-  const [selectedProject, setSelectedProject] = useState('BRCA1_Target_Design');
-  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
-  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+/* ---------- Sequence logic ---------- */
+const COMP = { A: 'T', T: 'A', G: 'C', C: 'G', N: 'N' };
+const rc = (s) => s.split('').reverse().map((c) => COMP[c] || 'N').join('');
+const IUPAC = { A: 'A', C: 'C', G: 'G', T: 'T', N: 'ACGT', R: 'AG', V: 'ACG' };
+const pamOk = (p, m) => p.length === m.length && [...m].every((c, i) => IUPAC[c].includes(p[i]));
+const NUCLEASES = {
+  'SpCas9 (NGG)': { pam: 'NGG', side: 3, len: 20 },
+  'SpCas9-NG (NG)': { pam: 'NG', side: 3, len: 20 },
+  'SaCas9 (NNGRRT)': { pam: 'NNGRRT', side: 3, len: 21 },
+  'Cas12a (TTTV)': { pam: 'TTTV', side: 5, len: 23 },
+};
+const BASE_COLOR = { A: '#2F855A', C: '#2B6CB0', G: '#B7791F', T: '#C0392B', N: '#8A949B' };
 
-  const navItems = [
-    { id: 1, label: 'Dashboard', icon: '🏠' },
-    { id: 2, label: 'Results', icon: '📊' },
-    { id: 3, label: 'Sequence Viewer', icon: '🧬' },
-    { id: 4, label: 'Off-Targets', icon: '🎯' },
-    { id: 5, label: 'Projects', icon: '📁' },
-    { id: 6, label: 'Exports', icon: '📥' },
-    { id: 7, label: 'Settings', icon: '⚙️' },
-    { id: 8, label: 'About', icon: 'ℹ️' },
-  ];
+const parseSeq = (raw) => {
+  const lines = raw.split('\n');
+  const header = lines.find((l) => l.startsWith('>'));
+  const seq = lines.filter((l) => !l.startsWith('>')).join('').toUpperCase().replace(/[^ACGTN]/g, '');
+  return { seq, name: header ? header.slice(1).trim().split(/\s+/)[0] : 'Untitled sequence' };
+};
+const gcPct = (s) => Math.round(([...s].filter((c) => c === 'G' || c === 'C').length / s.length) * 100);
 
-  const resultsData = [
-    { id: 1, spacer: 'GCTAGCTAGCTAGCTAGCTA', start: 1250, end: 1269, strand: '+', gc: '55%', mismatches: 1, specificity: '92.1%' },
-    { id: 2, spacer: 'CGATCGATCGATCGATCGAT', start: 3321, end: 3349, strand: '-', gc: '60%', mismatches: 2, specificity: '87.4%' },
-    { id: 3, spacer: 'TGCATCGATCGATCGATCGA', start: 5120, end: 5139, strand: '+', gc: '60%', mismatches: 1, specificity: '84.6%' },
-    { id: 4, spacer: 'AGCTAGCTAGCTAGCTAGCT', start: 789, end: 808, strand: '+', gc: '45%', mismatches: 3, specificity: '76.3%' },
-    { id: 5, spacer: 'GGGATGATCGATCGATCGTA', start: 2210, end: 2229, strand: '-', gc: '65%', mismatches: 2, specificity: '73.8%' },
-  ];
-
-  const projectsData = [
-    { title: 'BRCA1_Target_Design', date: 'May 20, 2025 • 10:42 AM', length: '8,432 bp', cas: 'SpCas9 NGG' },
-    { title: 'TP53_gRNA_Set', date: 'May 18, 2025 • 3:15 PM', length: '7,128 bp', cas: 'SpCas9 NGG' },
-    { title: 'VEGFA_Promoter', date: 'May 15, 2025 • 11:05 AM', length: '6,210 bp', cas: 'SpCas9 NGG' },
-    { title: 'IL2RG_Exon3', date: 'May 12, 2025 • 9:30 AM', length: '5,980 bp', cas: 'SpCas9 NGG' },
-    { title: 'MYC_Enhancer', date: 'May 10, 2025 • 4:20 PM', length: '10,203 bp', cas: 'SpCas9 NGG' },
-  ];
-
-  const nucleotides = ['A', 'T', 'C', 'G', 'A', 'T', 'G', 'C', 'A', 'T', 'G', 'C', 'A', 'T', 'A', 'T', 'G', 'C', 'A', 'G', 'C', 'T', 'A', 'G'];
-  const getColor = (n) => {
-    switch(n) {
-      case 'A': return 'bg-emerald-500 text-white';
-      case 'T': return 'bg-rose-500 text-white';
-      case 'C': return 'bg-blue-500 text-white';
-      case 'G': return 'bg-amber-500 text-white';
-      default: return 'bg-gray-200 text-gray-800';
+function scan(seq, nuc, len) {
+  const { pam, side } = NUCLEASES[nuc];
+  const pl = pam.length, L = seq.length, out = [];
+  [['+', seq], ['-', rc(seq)]].forEach(([strand, s]) => {
+    for (let i = 0; i + len + pl <= L; i++) {
+      const p = side === 3 ? s.slice(i + len, i + len + pl) : s.slice(i, i + pl);
+      if (!pamOk(p, pam)) continue;
+      const gs = side === 3 ? i : i + pl;
+      const g = s.slice(gs, gs + len);
+      if (g.includes('N')) continue;
+      const start = strand === '+' ? gs : L - (gs + len);
+      out.push({ strand, guide: g, pam: p, start, end: start + len });
     }
+  });
+  return out;
+}
+
+function scoreGuide(g) {
+  const gc = gcPct(g), flags = [];
+  let s = 100;
+  if (gc < 40) { s -= (40 - gc) * 1.2; flags.push('Low GC'); }
+  if (gc > 70) { s -= (gc - 70) * 1.2; flags.push('High GC'); }
+  if (/TTTT/.test(g)) { s -= 35; flags.push('TTTT terminator'); }
+  else if (/(.)\1{3,}/.test(g)) { s -= 10; flags.push('Homopolymer'); }
+  if (gcPct(g.slice(-10)) > 80) { s -= 8; flags.push('GC-rich seed'); }
+  return { gc, flags, score: Math.max(0, Math.min(100, Math.round(s))) };
+}
+
+function findOffTargets(seq, nuc, len, ref, maxMM) {
+  return scan(seq, nuc, len)
+    .map((x) => ({ ...x, mm: [...x.guide].map((c, i) => (c !== ref.guide[i] ? i : -1)).filter((i) => i >= 0) }))
+    .filter((x) => x.mm.length <= maxMM && !(x.mm.length === 0 && x.strand === ref.strand && x.start === ref.start))
+    .sort((a, b) => a.mm.length - b.mm.length || a.start - b.start);
+}
+
+const download = (name, text, type = 'text/plain') => {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type }));
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+
+const EXAMPLE = `>EMX1_exon_fragment
+GAGTCCGAGCAGAAGAAGAAGGGCTCCCATCACATCAACCGGTGGCGCATTGCCACGAAGCAGGCCAATGGGGAGGACATCGATGTCACCTCCAATGACAAGACCCTAGACCGTGGAATTCTCGACGTTAACAGTCTTCATTTATTTTGGGACGTAGCTAGCTTGGCCTTCAAGAGGCTACTCGTGGACCCCTAGTTCGAGTAGCAGGCCGAATTGGCACGATAGGGTACCATTCGAGGACATCGTCCTGAGGAGCTGGAAGCCAGTGACGGTGGGTCCCCAGGAGGATCGTAGCCCGAAGTACCGGTTGCAA`;
+
+/* ---------- Small UI parts ---------- */
+const Btn = ({ kind = 'ghost', className = '', ...p }) => (
+  <button
+    {...p}
+    className={`inline-flex items-center justify-center gap-2 rounded-md px-3.5 py-2 text-sm font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700 disabled:opacity-40 ${
+      kind === 'primary' ? 'bg-teal-800 text-white hover:bg-teal-900' : 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+    } ${className}`}
+  />
+);
+const Field = ({ label, hint, children }) => (
+  <label className="block">
+    <span className="mb-1 block text-sm font-medium text-slate-700">{label}</span>
+    {children}
+    {hint && <span className="mt-1 block text-xs text-slate-500">{hint}</span>}
+  </label>
+);
+const inputCls = 'w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:border-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-700/20';
+const Stat = ({ label, value, sub }) => (
+  <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
+    <div className="text-xs text-slate-500">{label}</div>
+    <div className="mt-0.5 text-2xl font-semibold tabular-nums text-slate-900">{value}</div>
+    {sub && <div className="text-xs text-slate-500">{sub}</div>}
+  </div>
+);
+const Empty = ({ title, text, action }) => (
+  <div className="rounded-lg border border-dashed border-slate-300 bg-white px-6 py-14 text-center">
+    <p className="font-medium text-slate-800">{title}</p>
+    <p className="mx-auto mt-1 max-w-sm text-sm text-slate-500">{text}</p>
+    {action && <div className="mt-4">{action}</div>}
+  </div>
+);
+const ScoreBar = ({ v }) => (
+  <div className="flex items-center gap-2">
+    <div className="h-1.5 w-16 overflow-hidden rounded-full bg-slate-200">
+      <div className="h-full rounded-full" style={{ width: `${v}%`, background: v >= 75 ? '#0F766E' : v >= 50 ? '#B7791F' : '#C0392B' }} />
+    </div>
+    <span className="w-7 text-right tabular-nums text-sm">{v}</span>
+  </div>
+);
+const GuideSeq = ({ g, mm = [] }) => (
+  <span className="font-mono text-[13px] tracking-wide">
+    {[...g].map((c, i) => (
+      <span key={i} style={{ color: BASE_COLOR[c] }} className={mm.includes(i) ? 'rounded-sm bg-red-100 font-bold underline' : ''}>{c}</span>
+    ))}
+  </span>
+);
+
+/* ---------- App ---------- */
+export default function App() {
+  const [screen, setScreen] = useState('dashboard');
+  const [raw, setRaw] = useState('');
+  const [nuc, setNuc] = useState('SpCas9 (NGG)');
+  const [len, setLen] = useState(20);
+  const [maxMM, setMaxMM] = useState(3);
+  const [minScore, setMinScore] = useState(0);
+  const [strandF, setStrandF] = useState('both');
+  const [sort, setSort] = useState({ k: 'score', d: -1 });
+  const [data, setData] = useState(null);
+  const [selId, setSelId] = useState(null);
+  const [error, setError] = useState('');
+  const [toast, setToast] = useState('');
+  const [projects, setProjects] = useState([]);
+
+  useEffect(() => {
+    const l = document.createElement('link');
+    l.rel = 'stylesheet';
+    l.href = 'https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap';
+    document.head.appendChild(l);
+    try { setProjects(JSON.parse(localStorage.getItem('cv_projects') || '[]')); } catch (e) { /* ignore */ }
+  }, []);
+  useEffect(() => { if (toast) { const t = setTimeout(() => setToast(''), 2200); return () => clearTimeout(t); } }, [toast]);
+
+  const persist = (list) => { setProjects(list); try { localStorage.setItem('cv_projects', JSON.stringify(list)); } catch (e) { /* ignore */ } };
+
+  const analyze = (rawIn = raw, nucIn = nuc, lenIn = len) => {
+    const { seq, name } = parseSeq(rawIn);
+    const need = lenIn + NUCLEASES[nucIn].pam.length;
+    if (seq.length < need) { setError(`Sequence has ${seq.length} valid bases. Add at least ${need} A/C/G/T bases to search.`); return; }
+    const guides = scan(seq, nucIn, lenIn)
+      .map((x) => ({ ...x, ...scoreGuide(x.guide) }))
+      .sort((a, b) => a.start - b.start)
+      .map((x, i) => ({ ...x, id: `g${String(i + 1).padStart(3, '0')}` }));
+    setError('');
+    setData({ seq, name, nuc: nucIn, len: lenIn, guides });
+    setSelId(guides.length ? [...guides].sort((a, b) => b.score - a.score)[0].id : null);
+    setScreen('results');
   };
 
-  return (
-    <div className="flex h-screen bg-[#F9FAFB] font-sans antialiased overflow-hidden">
-      
-      {/* Dark Sidebar Navigation */}
-      <aside className="w-64 bg-[#111827] text-gray-300 flex flex-col justify-between h-screen p-4 select-none shrink-0">
-        <div>
-          <div className="flex items-center space-x-2 px-2 mb-8">
-            <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold text-sm shadow">CV</div>
-            <div>
-              <h1 className="text-white font-bold text-base leading-tight">CRISPR-Vision</h1>
-              <p className="text-[10px] text-gray-400">gRNA Design Suite</p>
+  const shown = useMemo(() => {
+    if (!data) return [];
+    const f = data.guides.filter((g) => g.score >= minScore && (strandF === 'both' || g.strand === strandF));
+    return [...f].sort((a, b) => (a[sort.k] > b[sort.k] ? 1 : a[sort.k] < b[sort.k] ? -1 : 0) * sort.d);
+  }, [data, minScore, strandF, sort]);
+  const sel = data?.guides.find((g) => g.id === selId);
+  const off = useMemo(() => (sel ? findOffTargets(data.seq, data.nuc, data.len, sel, maxMM) : []), [sel, data, maxMM]);
+
+  const copy = (t) => { navigator.clipboard?.writeText(t); setToast('Copied to clipboard'); };
+  const exportRows = () => shown.map((g) => ({ id: g.id, guide: g.guide, pam: g.pam, strand: g.strand, start: g.start + 1, end: g.end, gc_percent: g.gc, score: g.score, flags: g.flags.join('; ') }));
+  const nav = [
+    ['dashboard', 'Design'], ['results', 'Guides'], ['viewer', 'Sequence'], ['offtargets', 'Off-targets'],
+    ['projects', 'Projects'], ['exports', 'Export'], ['settings', 'Settings'], ['about', 'About'],
+  ];
+  const needData = (el) => data ? el : (
+    <Empty title="No guides yet" text="Paste a sequence on the Design screen and run the search." action={<Btn kind="primary" onClick={() => setScreen('dashboard')}>Go to Design</Btn>} />
+  );
+
+  const Th = ({ k, children, className = '' }) => (
+    <th className={`px-3 py-2 text-left font-medium ${className}`}>
+      <button onClick={() => setSort((s) => ({ k, d: s.k === k ? -s.d : -1 }))} className="hover:text-slate-900">
+        {children}{sort.k === k ? (sort.d === 1 ? ' ↑' : ' ↓') : ''}
+      </button>
+    </th>
+  );
+
+  /* --- screens --- */
+  const Dashboard = () => {
+    const p = parseSeq(raw);
+    return (
+      <div className="grid gap-6 lg:grid-cols-[1fr_300px]">
+        <section className="rounded-lg border border-slate-200 bg-white p-5">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-slate-900">Target sequence</h2>
+            <div className="flex gap-2">
+              <Btn onClick={() => setRaw(EXAMPLE)}>Load example</Btn>
+              <Btn onClick={() => setRaw('')} disabled={!raw}>Clear</Btn>
             </div>
           </div>
-          <nav className="space-y-1">
-            {navItems.map((item) => (
-              <button
-                key={item.id}
-                onClick={() => setActiveScreen(item.id)}
-                className={`w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-xs font-medium transition-colors ${
-                  activeScreen === item.id ? 'bg-blue-600 text-white shadow-sm' : 'hover:bg-gray-800 text-gray-400'
-                }`}
-              >
-                <span className="text-sm">{item.icon}</span>
-                <span>{item.label}</span>
-              </button>
-            ))}
-          </nav>
+          <textarea
+            value={raw}
+            onChange={(e) => setRaw(e.target.value)}
+            spellCheck={false}
+            placeholder={'Paste DNA or FASTA, for example:\n>my_gene\nATGGCC...'}
+            className="h-64 w-full resize-y rounded-md border border-slate-300 bg-slate-50 p-3 font-mono text-[13px] leading-relaxed text-slate-800 focus:border-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-700/20"
+          />
+          <label className="mt-3 inline-block cursor-pointer text-sm text-teal-800 underline-offset-2 hover:underline">
+            Upload a FASTA file
+            <input type="file" accept=".fa,.fasta,.txt" className="hidden" onChange={(e) => e.target.files[0]?.text().then(setRaw)} />
+          </label>
+          {error && <p role="alert" className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p>}
+        </section>
+        <aside className="space-y-4">
+          <div className="rounded-lg border border-slate-200 bg-white p-5 space-y-4">
+            <Field label="Nuclease" hint={`PAM ${NUCLEASES[nuc].pam}, ${NUCLEASES[nuc].side === 3 ? "3′" : "5′"} of the guide`}>
+              <select className={inputCls} value={nuc} onChange={(e) => { setNuc(e.target.value); setLen(NUCLEASES[e.target.value].len); }}>
+                {Object.keys(NUCLEASES).map((n) => <option key={n}>{n}</option>)}
+              </select>
+            </Field>
+            <Field label={`Guide length: ${len} nt`}>
+              <input type="range" min="18" max="25" value={len} onChange={(e) => setLen(+e.target.value)} className="w-full accent-teal-800" />
+            </Field>
+            <Btn kind="primary" className="w-full" onClick={() => analyze()} disabled={!p.seq}>Find guides</Btn>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Stat label="Length" value={p.seq.length.toLocaleString()} sub="bases" />
+            <Stat label="GC content" value={p.seq ? `${gcPct(p.seq)}%` : '–'} />
+          </div>
+        </aside>
+      </div>
+    );
+  };
+
+  const Results = () => (
+    <div className="space-y-5">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Stat label="Guides found" value={data.guides.length} sub={`${data.guides.filter((g) => g.strand === '+').length} forward, ${data.guides.filter((g) => g.strand === '-').length} reverse`} />
+        <Stat label="Score 75 or higher" value={data.guides.filter((g) => g.score >= 75).length} />
+        <Stat label="With warnings" value={data.guides.filter((g) => g.flags.length).length} />
+        <Stat label="Best score" value={Math.max(0, ...data.guides.map((g) => g.score))} sub={data.nuc} />
+      </div>
+      <div className="flex flex-wrap items-end gap-4 rounded-lg border border-slate-200 bg-white p-4">
+        <Field label={`Minimum score: ${minScore}`}>
+          <input type="range" min="0" max="100" value={minScore} onChange={(e) => setMinScore(+e.target.value)} className="w-44 accent-teal-800" />
+        </Field>
+        <Field label="Strand">
+          <select className={inputCls} value={strandF} onChange={(e) => setStrandF(e.target.value)}>
+            <option value="both">Both</option><option value="+">Forward (+)</option><option value="-">Reverse (−)</option>
+          </select>
+        </Field>
+        <span className="ml-auto text-sm text-slate-500">{shown.length} of {data.guides.length} shown</span>
+      </div>
+      {shown.length === 0 ? (
+        <Empty title="No guides match these filters" text="Lower the minimum score or include both strands." action={<Btn onClick={() => { setMinScore(0); setStrandF('both'); }}>Reset filters</Btn>} />
+      ) : (
+        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+          <table className="w-full text-sm">
+            <thead className="border-b border-slate-200 bg-slate-50 text-slate-600">
+              <tr><Th k="id">ID</Th><Th k="guide">Guide (5′→3′)</Th><Th k="pam">PAM</Th><Th k="strand">Strand</Th><Th k="start">Position</Th><Th k="gc">GC</Th><Th k="score">Score</Th><th className="px-3 py-2 text-left font-medium">Warnings</th></tr>
+            </thead>
+            <tbody>
+              {shown.slice(0, 200).map((g) => (
+                <tr key={g.id} onClick={() => setSelId(g.id)} className={`cursor-pointer border-b border-slate-100 last:border-0 hover:bg-slate-50 ${g.id === selId ? 'bg-teal-50' : ''}`}>
+                  <td className="px-3 py-2 font-mono text-xs text-slate-500">{g.id}</td>
+                  <td className="px-3 py-2"><GuideSeq g={g.guide} /></td>
+                  <td className="px-3 py-2 font-mono text-[13px]">{g.pam}</td>
+                  <td className="px-3 py-2">{g.strand === '+' ? 'Forward' : 'Reverse'}</td>
+                  <td className="px-3 py-2 tabular-nums">{g.start + 1}–{g.end}</td>
+                  <td className="px-3 py-2 tabular-nums">{g.gc}%</td>
+                  <td className="px-3 py-2"><ScoreBar v={g.score} /></td>
+                  <td className="px-3 py-2 text-xs text-amber-800">{g.flags.join(', ') || <span className="text-slate-400">None</span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
-        <div className="text-[11px] text-gray-500 px-2 flex justify-between items-center border-t border-gray-800 pt-3">
-          <span>v1.0.0</span>
-          <span>🌙 ⚙️</span>
+      )}
+      {sel && (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-teal-800/30 bg-white p-4">
+          <div className="text-sm text-slate-600">Selected <span className="font-mono">{sel.id}</span></div>
+          <GuideSeq g={sel.guide} /><span className="font-mono text-[13px] text-slate-500">{sel.pam}</span>
+          <div className="ml-auto flex gap-2">
+            <Btn onClick={() => copy(sel.guide)}>Copy guide</Btn>
+            <Btn onClick={() => setScreen('viewer')}>View in sequence</Btn>
+            <Btn kind="primary" onClick={() => setScreen('offtargets')}>Check off-targets</Btn>
+          </div>
         </div>
+      )}
+    </div>
+  );
+
+  const Viewer = () => {
+    const { seq, guides } = data;
+    const cov = new Array(seq.length).fill(0);
+    guides.forEach((g) => { for (let i = g.start; i < g.end; i++) cov[i]++; });
+    const pl = NUCLEASES[data.nuc].pam.length, side = NUCLEASES[data.nuc].side;
+    let ps = -1;
+    if (sel) ps = (sel.strand === '+') === (side === 3) ? sel.end : sel.start - pl;
+    const ROW = 60, rows = [];
+    for (let r = 0; r < Math.min(seq.length, 6000); r += ROW) rows.push(r);
+    return (
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-slate-600">
+          {Object.entries(BASE_COLOR).slice(0, 4).map(([b, c]) => <span key={b}><b style={{ color: c }} className="font-mono">{b}</b></span>)}
+          <span><span className="rounded-sm bg-teal-200 px-1.5">guide</span> selected</span>
+          <span><span className="rounded-sm bg-amber-200 px-1.5">PAM</span></span>
+          <span><span className="border-b-2 border-slate-400">underline</span> covered by any guide</span>
+        </div>
+        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white p-4 font-mono text-[13px] leading-7">
+          {rows.map((r) => (
+            <div key={r} className="flex whitespace-nowrap">
+              <span className="w-14 shrink-0 pr-3 text-right text-xs leading-7 text-slate-400">{r + 1}</span>
+              <span>
+                {[...seq.slice(r, r + ROW)].map((c, j) => {
+                  const i = r + j;
+                  const inG = sel && i >= sel.start && i < sel.end, inP = i >= ps && i < ps + pl;
+                  return (
+                    <span key={i} style={{ color: BASE_COLOR[c] }}
+                      className={`${inG ? 'bg-teal-200' : inP ? 'bg-amber-200' : ''} ${cov[i] ? 'border-b-2 border-slate-300' : ''} ${j % 10 === 9 ? 'mr-3' : ''}`}>{c}</span>
+                  );
+                })}
+              </span>
+            </div>
+          ))}
+        </div>
+        {seq.length > 6000 && <p className="text-xs text-slate-500">Showing the first 6,000 bases of {seq.length.toLocaleString()}.</p>}
+      </div>
+    );
+  };
+
+  const Offtargets = () => !sel ? <Empty title="No guide selected" text="Pick a guide on the Guides screen first." action={<Btn onClick={() => setScreen('results')}>Go to Guides</Btn>} /> : (
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center gap-4 rounded-lg border border-slate-200 bg-white p-4">
+        <div><div className="text-xs text-slate-500">Reference guide {sel.id}</div><GuideSeq g={sel.guide} /></div>
+        <Field label={`Allow up to ${maxMM} mismatches`}>
+          <input type="range" min="0" max="5" value={maxMM} onChange={(e) => setMaxMM(+e.target.value)} className="w-40 accent-teal-800" />
+        </Field>
+        <div className="ml-auto text-sm text-slate-600"><b className="tabular-nums">{off.length}</b> similar sites</div>
+      </div>
+      <p className="rounded-md bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        This search only covers the sequence you pasted. It cannot see the rest of the genome, so confirm candidates with a genome-wide tool such as Cas-OFFinder before ordering.
+      </p>
+      {off.length === 0 ? <Empty title="No similar sites in this sequence" text={`No other site within ${maxMM} mismatches next to a valid ${NUCLEASES[data.nuc].pam} PAM.`} /> : (
+        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+          <table className="w-full text-sm">
+            <thead className="border-b border-slate-200 bg-slate-50 text-slate-600"><tr>
+              {['Site', 'Strand', 'Position', 'Mismatches', 'Matches guide at'].map((h) => <th key={h} className="px-3 py-2 text-left font-medium">{h}</th>)}
+            </tr></thead>
+            <tbody>
+              {off.slice(0, 100).map((o, i) => (
+                <tr key={i} className="border-b border-slate-100 last:border-0">
+                  <td className="px-3 py-2"><GuideSeq g={o.guide} mm={o.mm} /> <span className="font-mono text-[13px] text-slate-400">{o.pam}</span></td>
+                  <td className="px-3 py-2">{o.strand === '+' ? 'Forward' : 'Reverse'}</td>
+                  <td className="px-3 py-2 tabular-nums">{o.start + 1}–{o.end}</td>
+                  <td className="px-3 py-2 tabular-nums">{o.mm.length}</td>
+                  <td className="px-3 py-2 text-slate-500">{data.len - o.mm.length} of {data.len} positions</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+
+  const Projects = () => (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-slate-600">Projects are saved in this browser.</p>
+        <Btn kind="primary" disabled={!data} onClick={() => { persist([{ id: Date.now(), name: data.name, raw: `>${data.name}\n${data.seq}`, nuc: data.nuc, len: data.len, count: data.guides.length, date: new Date().toLocaleDateString() }, ...projects]); setToast('Project saved'); }}>Save current analysis</Btn>
+      </div>
+      {projects.length === 0 ? <Empty title="No saved projects" text="Run an analysis, then save it here to reopen it later." /> : (
+        <ul className="divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white">
+          {projects.map((p) => (
+            <li key={p.id} className="flex items-center gap-4 px-4 py-3">
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-medium text-slate-900">{p.name}</div>
+                <div className="text-xs text-slate-500">{p.nuc}, {p.len} nt, {p.count} guides, saved {p.date}</div>
+              </div>
+              <Btn onClick={() => { setRaw(p.raw); setNuc(p.nuc); setLen(p.len); analyze(p.raw, p.nuc, p.len); }}>Open</Btn>
+              <Btn onClick={() => persist(projects.filter((x) => x.id !== p.id))}>Delete</Btn>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+
+  const Exports = () => {
+    const rows = exportRows();
+    const items = [
+      ['CSV table', 'Open in Excel or Sheets', () => download('guides.csv', ['id,guide,pam,strand,start,end,gc_percent,score,flags', ...rows.map((r) => Object.values(r).map((v) => `"${v}"`).join(','))].join('\n'), 'text/csv')],
+      ['JSON', 'For scripts and pipelines', () => download('guides.json', JSON.stringify({ sequence: data.name, nuclease: data.nuc, guides: rows }, null, 2), 'application/json')],
+      ['FASTA', 'Guide sequences only, ready for ordering', () => download('guides.fasta', rows.map((r) => `>${r.id}_${r.strand}_${r.start}-${r.end} score=${r.score}\n${r.guide}`).join('\n'))],
+    ];
+    return (
+      <div className="space-y-4">
+        <p className="text-sm text-slate-600">Exports include the {rows.length} guides currently shown on the Guides screen, so your filters apply.</p>
+        <div className="grid gap-4 md:grid-cols-3">
+          {items.map(([t, d, fn]) => (
+            <div key={t} className="flex flex-col rounded-lg border border-slate-200 bg-white p-5">
+              <div className="font-medium text-slate-900">{t}</div>
+              <p className="mb-4 mt-1 flex-1 text-sm text-slate-500">{d}</p>
+              <Btn onClick={fn} disabled={!rows.length}>Download {t.split(' ')[0]}</Btn>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  const Settings = () => (
+    <div className="max-w-xl space-y-5 rounded-lg border border-slate-200 bg-white p-6">
+      <Field label="Default nuclease"><select className={inputCls} value={nuc} onChange={(e) => { setNuc(e.target.value); setLen(NUCLEASES[e.target.value].len); }}>{Object.keys(NUCLEASES).map((n) => <option key={n}>{n}</option>)}</select></Field>
+      <Field label={`Guide length: ${len} nt`}><input type="range" min="18" max="25" value={len} onChange={(e) => setLen(+e.target.value)} className="w-full accent-teal-800" /></Field>
+      <Field label={`Off-target mismatch limit: ${maxMM}`} hint="Higher values find more candidate sites but take longer on large sequences."><input type="range" min="0" max="5" value={maxMM} onChange={(e) => setMaxMM(+e.target.value)} className="w-full accent-teal-800" /></Field>
+      <Btn onClick={() => { persist([]); setToast('Saved projects cleared'); }}>Clear saved projects</Btn>
+    </div>
+  );
+
+  const About = () => (
+    <div className="max-w-2xl space-y-4 text-[15px] leading-7 text-slate-700">
+      <p>CRISPR-Vision scans both strands of a sequence for sites next to your chosen PAM and ranks the resulting guide RNAs. Everything runs in your browser; your sequence is never uploaded.</p>
+      <h3 className="pt-2 text-base font-semibold text-slate-900">How the score works</h3>
+      <p>The 0–100 score is a transparent heuristic, not a trained model. It starts at 100 and subtracts points for GC content outside 40–70%, a TTTT run (which can stop U6 transcription), other homopolymer runs, and a very GC-rich seed region. Use it to filter out poor candidates, not to predict editing efficiency.</p>
+      <h3 className="pt-2 text-base font-semibold text-slate-900">Limits</h3>
+      <p>Off-target search is limited to the pasted sequence. Validate shortlisted guides against the full genome with a dedicated tool before ordering.</p>
+    </div>
+  );
+
+  const titles = { dashboard: 'Design', results: 'Guides', viewer: 'Sequence viewer', offtargets: 'Off-targets', projects: 'Projects', exports: 'Export', settings: 'Settings', about: 'About' };
+  const body = {
+    dashboard: <Dashboard />, results: needData(data && <Results />), viewer: needData(data && <Viewer />),
+    offtargets: needData(data && <Offtargets />), projects: <Projects />, exports: needData(data && <Exports />),
+    settings: <Settings />, about: <About />,
+  }[screen];
+
+  return (
+    <div className="flex h-screen bg-slate-100 text-slate-800" style={{ fontFamily: "'IBM Plex Sans', system-ui, sans-serif" }}>
+      <aside className="hidden w-56 shrink-0 flex-col border-r border-slate-200 bg-white md:flex">
+        <div className="border-b border-slate-200 px-5 py-5">
+          <div className="text-[17px] font-semibold tracking-tight text-slate-900">CRISPR-Vision</div>
+          <div className="text-xs text-slate-500">Guide RNA design</div>
+        </div>
+        <nav className="flex-1 space-y-0.5 p-3">
+          {nav.map(([id, label]) => (
+            <button key={id} onClick={() => setScreen(id)}
+              className={`flex w-full items-center justify-between rounded-md border-l-2 px-3 py-2 text-left text-sm transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-700 ${screen === id ? 'border-teal-800 bg-teal-50 font-medium text-teal-900' : 'border-transparent text-slate-600 hover:bg-slate-50'}`}>
+              {label}
+              {id === 'results' && data && <span className="text-xs tabular-nums text-slate-400">{data.guides.length}</span>}
+            </button>
+          ))}
+        </nav>
+        {data && <div className="border-t border-slate-200 p-4 text-xs text-slate-500"><div className="truncate font-medium text-slate-700">{data.name}</div>{data.seq.length.toLocaleString()} bp, {data.nuc}</div>}
       </aside>
 
-      {/* Main Workspace Area */}
-      <main className="flex-1 overflow-y-auto relative">
-        
-        {/* SCREEN 1: Landing & Sequence Input Dashboard */}
-        {activeScreen === 1 && (
-          <div className="p-8 max-w-6xl mx-auto">
-            <h2 className="text-2xl font-bold text-gray-900 tracking-tight">Welcome to CRISPR-Vision</h2>
-            <p className="text-sm text-gray-500 mt-1 mb-6">Design high-specificity gRNAs and visualize genomic targets with confidence.</p>
-            
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-              <div className="flex space-x-6 border-b border-gray-100 pb-3 mb-4 text-xs font-semibold text-blue-600">
-                <span className="border-b-2 border-blue-600 pb-3 cursor-pointer">Input Sequence</span>
-                <span className="text-gray-400 cursor-pointer hover:text-gray-600">Example Sequences</span>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="md:col-span-2">
-                  <label className="block text-xs font-medium text-gray-700 mb-2">Paste raw DNA sequence</label>
-                  <textarea 
-                    className="w-full h-44 p-3 border border-gray-200 rounded-lg font-mono text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50/50"
-                    defaultValue="ATCGGATCGGACTCGATCGATCGATCGATCGTCG&#10;CTAGCTAGCTAGCTAGCTAGCTAGCTAGCTAG&#10;CSATCGATCGATCGTCGATCGATCGATCGATC&#10;ATCGATCGATCGCTTAGCTAGCTAGCTAGCTA&#10;GATCGATCGATCGATCGATCGATCGATCGATC"
-                  />
-                </div>
-                <div className="border-2 border-dashed border-blue-200 bg-blue-50/40 rounded-xl flex flex-col items-center justify-center p-6 text-center cursor-pointer hover:bg-blue-50 transition">
-                  <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 mb-2 font-bold text-lg">📁</div>
-                  <p className="text-xs font-semibold text-blue-600">Drag & drop .fasta file here</p>
-                  <p className="text-[11px] text-gray-400 mt-1">or click to browse</p>
-                  <span className="text-[10px] text-gray-400 mt-3">Supports .fasta, .fa, .txt (max 50MB)</span>
-                </div>
-              </div>
-
-              <div className="mt-6 flex items-center justify-between border-t border-gray-100 pt-5">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 mb-1">Select Cas Variant</label>
-                  <select className="border border-gray-200 rounded-lg px-3 py-2 text-xs bg-white text-gray-800 focus:outline-none shadow-sm">
-                    <option>SpCas9 NGG</option>
-                  </select>
-                </div>
-                <button 
-                  onClick={() => setActiveScreen(2)}
-                  className="bg-blue-600 hover:bg-blue-700 text-white font-medium px-6 py-2.5 rounded-lg text-xs shadow-md transition-colors flex items-center space-x-2"
-                >
-                  <span>▶ Run Analysis</span>
-                </button>
-              </div>
-            </div>
+      <main className="flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-6xl p-4 md:p-8">
+          <div className="mb-5 flex items-center justify-between">
+            <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{titles[screen]}</h1>
+            <select className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm md:hidden" value={screen} onChange={(e) => setScreen(e.target.value)}>
+              {nav.map(([id, l]) => <option key={id} value={id}>{l}</option>)}
+            </select>
           </div>
-        )}
-
-        {/* SCREEN 2: Candidate Results & Scoring Table */}
-        {activeScreen === 2 && (
-          <div className="p-8 max-w-7xl mx-auto">
-            {/* Metric Summary Cards */}
-            <div className="grid grid-cols-4 gap-4 mb-6">
-              <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-                <p className="text-[11px] text-gray-400 uppercase font-semibold">Total Candidates</p>
-                <h3 className="text-2xl font-bold text-gray-900 mt-1">23</h3>
-                <span className="text-[10px] text-gray-500">Passing filters</span>
-              </div>
-              <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-                <p className="text-[11px] text-gray-400 uppercase font-semibold">High Specificity (Score ≥ 70)</p>
-                <h3 className="text-2xl font-bold text-emerald-600 mt-1">11</h3>
-                <span className="text-[10px] text-gray-500">47.8%</span>
-              </div>
-              <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-                <p className="text-[11px] text-gray-400 uppercase font-semibold">Average GC Content</p>
-                <h3 className="text-2xl font-bold text-blue-600 mt-1">52.3%</h3>
-                <span className="text-[10px] text-gray-500">Optimal (40-60%)</span>
-              </div>
-              <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-                <p className="text-[11px] text-gray-400 uppercase font-semibold">Best Score</p>
-                <h3 className="text-2xl font-bold text-purple-600 mt-1">92.1</h3>
-                <span className="text-[10px] text-gray-500">Rank #1</span>
-              </div>
-            </div>
-
-            {/* Data Table */}
-            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-              <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50/50">
-                <input type="text" placeholder="Search by sequence..." className="px-3 py-1.5 border rounded-lg text-xs w-64 bg-white" />
-                <button onClick={() => setIsDrawerOpen(true)} className="text-xs bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg font-medium hover:bg-blue-100">
-                  Inspect Row 1 (Drawer Demo)
-                </button>
-              </div>
-              <table className="w-full text-left border-collapse text-xs">
-                <thead>
-                  <tr className="bg-gray-100 text-gray-600 border-b border-gray-200 font-semibold">
-                    <th className="p-3">Rank</th>
-                    <th className="p-3">gRNA Spacer (20 bp)</th>
-                    <th className="p-3">Start</th>
-                    <th className="p-3">End</th>
-                    <th className="p-3">Strand</th>
-                    <th className="p-3">GC %</th>
-                    <th className="p-3">Off-Target Mismatches</th>
-                    <th className="p-3">Specificity Score</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {resultsData.map((row) => (
-                    <tr key={row.id} onClick={() => setIsDrawerOpen(true)} className="hover:bg-blue-50/50 cursor-pointer transition">
-                      <td className="p-3 font-semibold text-gray-500">{row.id}</td>
-                      <td className="p-3 font-mono text-gray-800 font-medium">{row.spacer}</td>
-                      <td className="p-3 text-gray-600">{row.start}</td>
-                      <td className="p-3 text-gray-600">{row.end}</td>
-                      <td className="p-3 text-gray-600 font-bold">{row.strand}</td>
-                      <td className="p-3 text-gray-600">{row.gc}</td>
-                      <td className="p-3"><span className="px-2 py-0.5 bg-amber-100 text-amber-800 rounded-full font-bold">{row.mismatches}</span></td>
-                      <td className="p-3 font-bold text-emerald-600">{row.specificity}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* SCREEN 3: Interactive Genomic Sequence Viewer */}
-        {activeScreen === 3 && (
-          <div className="p-8 max-w-7xl mx-auto">
-            <div className="flex justify-between items-center mb-4">
-              <span className="text-xs font-semibold text-gray-700">Sequence: Untitled_Sequence_01.fasta</span>
-              <span className="text-xs text-gray-500 font-mono">Length: 8,432 bp</span>
-            </div>
-            
-            <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
-              <div className="flex items-center space-x-3 mb-6 border-b pb-4 text-xs">
-                <button className="border px-3 py-1.5 rounded-lg bg-gray-50 font-medium hover:bg-gray-100">🔍 Zoom: 1.5x</button>
-                <button className="border px-3 py-1.5 rounded-lg bg-gray-50 font-medium hover:bg-gray-100">Fit to Screen</button>
-              </div>
-
-              {/* Nucleotide Grid Blocks */}
-              <div className="font-mono text-xs overflow-x-auto py-2">
-                <p className="text-[11px] text-gray-400 mb-2">Forward Strand (5' → 3')</p>
-                <div className="flex space-x-1">
-                  {nucleotides.map((n, idx) => (
-                    <div key={idx} className={`w-8 h-8 flex items-center justify-center font-bold rounded text-xs shadow-sm ${getColor(n)}`}>
-                      {n}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Binding Tracks Placeholder */}
-              <div className="mt-8 pt-6 border-t border-gray-100">
-                <p className="text-xs font-bold text-gray-700 mb-3">gRNA Candidates (Top)</p>
-                <div className="h-10 bg-emerald-50 rounded-lg border border-emerald-200 flex items-center px-4 space-x-4 text-xs text-emerald-800 font-semibold">
-                  <span>#1 Target Region</span>
-                  <span className="text-[10px] bg-emerald-200 px-2 py-0.5 rounded">Chr 1: 1,250 - 1,269 (+)</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* SCREEN 4: Off-Target Details Modal / Drawer */}
-        {(activeScreen === 4 || isDrawerOpen) && (
-          <div className="absolute inset-0 bg-black/30 backdrop-blur-xs flex justify-end z-50">
-            <div className="w-[450px] bg-white h-full shadow-2xl p-6 overflow-y-auto flex flex-col justify-between">
-              <div>
-                <div className="flex justify-between items-center border-b pb-4">
-                  <h3 className="font-bold text-gray-900 text-sm">gRNA Candidate #1</h3>
-                  <button onClick={() => setIsDrawerOpen(false)} className="text-gray-400 hover:text-black font-bold">✕</button>
-                </div>
-                
-                <div className="mt-4 bg-gray-50 p-3 rounded-lg border">
-                  <p className="text-[10px] text-gray-500 uppercase font-semibold">Spacer Sequence (20 bp)</p>
-                  <p className="font-mono font-bold text-sm text-blue-600 mt-1">GCTAGCTAGCTAGCTAGCTA</p>
-                </div>
-
-                <div className="mt-6">
-                  <h4 className="text-xs font-bold text-gray-700 mb-3">Off-Target Matches</h4>
-                  <div className="space-y-2 text-xs">
-                    <div className="p-3 border rounded-lg flex justify-between items-center bg-white shadow-xs">
-                      <span className="font-semibold text-gray-800">chr3: 125,438</span>
-                      <span className="text-emerald-600 font-bold">Score: 91.3</span>
-                    </div>
-                    <div className="p-3 border rounded-lg flex justify-between items-center bg-white shadow-xs">
-                      <span className="font-semibold text-gray-800">chr7: 88,912</span>
-                      <span className="text-emerald-600 font-bold">Score: 78.5</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <button onClick={() => setIsDrawerOpen(false)} className="w-full bg-gray-900 text-white py-2 rounded-lg text-xs font-medium hover:bg-black">
-                Close Drawer
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* SCREEN 5: Project History & Saved Sessions */}
-        {activeScreen === 5 && (
-          <div className="p-8 max-w-7xl mx-auto">
-            <div className="flex justify-between items-center mb-6">
-              <div>
-                <h2 className="text-xl font-bold text-gray-900">My Projects</h2>
-                <p className="text-xs text-gray-500 mt-0.5">Manage and revisit your CRISPR design sessions.</p>
-              </div>
-              <button className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-medium shadow-sm">
-                + New Project
-              </button>
-            </div>
-
-            <div className="grid grid-cols-3 gap-6">
-              {projectsData.map((proj, idx) => (
-                <div key={idx} className="bg-white border border-gray-200 rounded-xl p-5 shadow-sm hover:border-blue-300 transition">
-                  <h3 className="font-bold text-gray-900 text-sm mb-1">{proj.title}</h3>
-                  <p className="text-[11px] text-gray-400 mb-4">{proj.date}</p>
-                  <div className="text-xs text-gray-600 space-y-1 mb-5">
-                    <p>Length: <span className="font-mono font-medium">{proj.length}</span></p>
-                    <p>Cas: <span className="font-medium">{proj.cas}</span></p>
-                  </div>
-                  <div className="flex space-x-2">
-                    <button onClick={() => setSelectedProject(proj.title)} className="flex-1 bg-blue-50 text-blue-600 hover:bg-blue-100 py-1.5 rounded-lg text-xs font-semibold">Open</button>
-                    <button className="p-1.5 border rounded-lg text-gray-400 hover:text-red-600">🗑️</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* SCREEN 6: Export & Summary Report Modal */}
-        {(activeScreen === 6 || isExportModalOpen) && (
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center z-50">
-            <div className="bg-white rounded-2xl shadow-2xl w-[500px] p-6 border border-gray-200">
-              <div className="flex justify-between items-center border-b pb-3 mb-4">
-                <h3 className="font-bold text-gray-900 text-sm">Export & Summary Report</h3>
-                <button onClick={() => setActiveScreen(1)} className="text-gray-400 hover:text-black font-bold">✕</button>
-              </div>
-
-              <div className="space-y-4 text-xs">
-                <div>
-                  <label className="block font-semibold text-gray-700 mb-2">Select Export Format</label>
-                  <div className="space-y-2">
-                    <label className="flex items-center space-x-2"><input type="radio" name="format" defaultChecked /> <span>CSV (Comma Separated Values)</span></label>
-                    <label className="flex items-center space-x-2"><input type="radio" name="format" /> <span>FASTA Sequences</span></label>
-                    <label className="flex items-center space-x-2"><input type="radio" name="format" /> <span>JSON (All Data)</span></label>
-                  </div>
-                </div>
-
-                <div className="border-t pt-4">
-                  <label className="block font-semibold text-gray-700 mb-2">Include in Export</label>
-                  <div className="space-y-2 text-gray-600">
-                    <label className="flex items-center space-x-2"><input type="checkbox" defaultChecked /> <span>Include gRNA candidate table</span></label>
-                    <label className="flex items-center space-x-2"><input type="checkbox" defaultChecked /> <span>Include off-target breakdown</span></label>
-                    <label className="flex items-center space-x-2"><input type="checkbox" defaultChecked /> <span>Include GC content scores</span></label>
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-6 pt-4 border-t flex justify-end space-x-3">
-                <button onClick={() => setActiveScreen(1)} className="px-4 py-2 border rounded-lg text-xs font-medium hover:bg-gray-50">Cancel</button>
-                <button onClick={() => alert("Report downloaded successfully!")} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg text-xs font-medium shadow-sm">Download Report</button>
-              </div>
-            </div>
-          </div>
-        )}
-
+          {body}
+        </div>
       </main>
+      {toast && <div role="status" className="fixed bottom-5 right-5 rounded-md bg-slate-900 px-4 py-2 text-sm text-white shadow-lg">{toast}</div>}
     </div>
   );
 }
